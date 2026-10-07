@@ -1,0 +1,59 @@
+name: Build SMPBridge plugins
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Phone-friendly: if you uploaded smp-bridge-plugins.zip as-is, unpack it first.
+      - name: Unpack smp-bridge-plugins.zip (only if present)
+        run: |
+          if [ -f smp-bridge-plugins.zip ]; then
+            unzip -q -o smp-bridge-plugins.zip -d _unz
+            cp -r _unz/smp-bridge-plugins/. .
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+
+      - name: Build Paper jar + Velocity 3.x jar
+        run: |
+          gradle :paper:jar :velocity:jar --no-daemon -PvelocityApiVersion=3.4.0-SNAPSHOT -PvelocityJavaRelease=17
+          mkdir -p dist
+          cp paper/build/libs/SMPBridge-Paper.jar dist/SMPBridge-Paper.jar
+          cp velocity/build/libs/SMPBridge-Velocity.jar dist/SMPBridge-Velocity-for-3.x.jar
+
+      - name: Build Velocity 4.x jar (optional)
+        continue-on-error: true
+        run: |
+          gradle :velocity:clean :velocity:jar --no-daemon -PvelocityApiVersion=4.2.1-SNAPSHOT -PvelocityJavaRelease=25
+          cp velocity/build/libs/SMPBridge-Velocity.jar dist/SMPBridge-Velocity-for-4.x.jar
+
+      - name: Check the jars contain their plugin descriptors
+        run: |
+          unzip -l dist/SMPBridge-Paper.jar | grep -q 'plugin.yml'
+          for j in dist/SMPBridge-Velocity-*.jar; do
+            if ! unzip -l "$j" | grep -q 'velocity-plugin.json'; then
+              echo "adding velocity-plugin.json to $j"
+              printf '{"id":"smpbridge","name":"SMPBridge","version":"1.0.0","authors":["SMPBridge"],"dependencies":[],"main":"dev.smpbridge.velocity.SmpBridgeVelocity"}' > velocity-plugin.json
+              zip -q "$j" velocity-plugin.json
+            fi
+          done
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SMPBridge-plugins
+          path: dist/*.jar
+          if-no-files-found: error
